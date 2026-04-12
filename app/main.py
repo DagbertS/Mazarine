@@ -1,6 +1,9 @@
 import os
+import json
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +18,75 @@ from app.config import load_config, get_db_path, get_upload_dir
 from app import database
 from app.api import users, recipes, categories, cooking, planner, shopping, admin, menu
 
+
+async def seed_recipes(conn, admin_id: str):
+    """Load seed recipes from seed_data.json on first deployment."""
+    seed_path = Path(__file__).parent / "seed_data.json"
+    if not seed_path.exists():
+        print("No seed_data.json found, skipping recipe seed")
+        return
+
+    with open(seed_path) as f:
+        seed = json.load(f)
+
+    recipe_count = len(seed.get("recipes", []))
+    print(f"Seeding {recipe_count} recipes from seed_data.json...")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Create tags first
+    tag_id_map = {}  # name -> id
+    for tag_entry in seed.get("tags", []):
+        tname = tag_entry["name"]
+        ttype = tag_entry.get("type", "auto")
+        tid = f"tag-{uuid.uuid4().hex[:8]}"
+        await conn.execute(
+            "INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
+            (tid, admin_id, tname, ttype),
+        )
+        # Fetch the actual id (may already exist)
+        cur = await conn.execute(
+            "SELECT id FROM tags WHERE user_id = ? AND name = ?", (admin_id, tname)
+        )
+        row = await cur.fetchone()
+        if row:
+            tag_id_map[tname] = row[0]
+
+    # Create recipes
+    for r in seed["recipes"]:
+        rid = f"rcp-{uuid.uuid4().hex[:12]}"
+        await conn.execute(
+            """INSERT INTO recipes (id, user_id, title, description, ingredients, directions,
+               servings, prep_time_minutes, cook_time_minutes, total_time_minutes,
+               source_url, source_name, notes, nutrition, photo_urls,
+               rating, is_favourite, is_pinned, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                rid, admin_id, r["title"], r.get("description", ""),
+                json.dumps(r.get("ingredients", [])),
+                json.dumps(r.get("directions", [])),
+                r.get("servings"), r.get("prep_time_minutes"),
+                r.get("cook_time_minutes"), r.get("total_time_minutes"),
+                r.get("source_url", ""), r.get("source_name", ""),
+                r.get("notes", ""),
+                json.dumps(r.get("nutrition", {})),
+                json.dumps(r.get("photo_urls", [])),
+                0, 0, 0, now, now,
+            ),
+        )
+
+        # Link tags
+        for tname in r.get("tags", []):
+            if tname in tag_id_map:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)",
+                    (rid, tag_id_map[tname]),
+                )
+
+    await conn.commit()
+    print(f"Seeded {recipe_count} recipes with {len(tag_id_map)} tags")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_config()
@@ -24,7 +96,7 @@ async def lifespan(app: FastAPI):
     upload_dir = get_upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Seed default admin if no users exist
+    # Seed default admin and recipes if no users exist (fresh deployment)
     from app.database import get_conn
     conn = await get_conn()
     try:
@@ -35,6 +107,9 @@ async def lifespan(app: FastAPI):
             result = await create_user("admin@mazarine.app", "admin", "admin2026!", role="admin")
             await confirm_email(result["confirmation_token"])
             print("Default admin created: admin / admin2026!")
+
+            # Seed recipes for fresh deployment
+            await seed_recipes(conn, result["id"])
     finally:
         await conn.close()
 
@@ -42,6 +117,7 @@ async def lifespan(app: FastAPI):
     print(f"Mazarine started | DB: {database.db_path} | AI: {ai_status}")
     yield
     print("Mazarine shutting down")
+
 
 app = FastAPI(title="Mazarine", version="1.0.0", lifespan=lifespan)
 
