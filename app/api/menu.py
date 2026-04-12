@@ -101,6 +101,7 @@ Return ONLY valid JSON with this structure:
         "directions": [
           {{"step": 1, "text": "direction text", "timer_minutes": null}}
         ],
+        "nutrition": {{"calories": <number>, "protein": <grams>, "carbs": <grams>, "fat": <grams>, "fiber": <grams>}},
         "suggested_tags": ["tag1", "tag2"]
       }},
       "wine_pairing": "Optional wine suggestion",
@@ -111,7 +112,7 @@ Return ONLY valid JSON with this structure:
   "timeline": "Suggested preparation timeline, e.g. what to prep first"
 }}
 
-Be creative, specific with quantities, and ensure the menu is cohesive. Each recipe must have complete, cookable ingredients and directions."""
+Be creative, specific with quantities, and ensure the menu is cohesive. Each recipe must have complete, cookable ingredients and directions. Nutrition values must be estimated per serving. Include 6-8 relevant tags per recipe covering cuisine, dietary labels, meal type, and characteristics."""
 
     try:
         import anthropic
@@ -148,12 +149,16 @@ Be creative, specific with quantities, and ensure the menu is cohesive. Each rec
 
 @router.post("/save")
 async def save_menu_recipes(request: Request, courses: list = []):
-    """Save all recipes from a generated menu to the user's collection."""
+    """Save all recipes from a generated menu, fully enriched with AI data and photos."""
     user = await get_current_user(request)
     body = await request.json()
     courses = body.get("courses", [])
     menu_title = body.get("menu_title", "Menu")
     saved_ids = []
+
+    # Find photos for all recipes in parallel
+    from app.services.photo_finder import find_recipe_photo
+
     conn = await get_conn()
     try:
         for course in courses:
@@ -162,19 +167,53 @@ async def save_menu_recipes(request: Request, courses: list = []):
                 continue
             rid = f"rcp-{uuid.uuid4().hex[:12]}"
             now = datetime.now(timezone.utc).isoformat()
+
+            # Get nutrition from the generated recipe (already included in prompt)
+            nutrition = recipe.get("nutrition", {})
+
+            # Find a photo for this recipe
+            photo_url = await find_recipe_photo(recipe["title"])
+            photo_urls = [photo_url] if photo_url else []
+
+            # Build rich notes with menu context
+            notes_parts = [f"Part of menu: {menu_title}"]
+            if course.get("course_name"):
+                notes_parts.append(f"Course: {course['course_name']}")
+            if course.get("wine_pairing"):
+                notes_parts.append(f"Wine pairing: {course['wine_pairing']}")
+            if course.get("plating_tip"):
+                notes_parts.append(f"Plating: {course['plating_tip']}")
+            notes = "\n".join(notes_parts)
+
+            # If nutrition is missing, run AI enrichment
+            if not nutrition:
+                from app.services.enrichment import enrich_recipe
+                enriched = await enrich_recipe(recipe, force_tags=True)
+                if enriched:
+                    nutrition = enriched.get("nutrition", {})
+                    # Merge any extra tags from enrichment
+                    extra_tags = enriched.get("suggested_tags", [])
+                    existing_tags = recipe.get("suggested_tags", [])
+                    recipe["suggested_tags"] = list(set(existing_tags + extra_tags))
+                    # Fill description if missing
+                    if enriched.get("description") and not recipe.get("description"):
+                        recipe["description"] = enriched["description"]
+
             await conn.execute(
                 """INSERT INTO recipes (id, user_id, title, description, ingredients, directions, servings,
                    prep_time_minutes, cook_time_minutes, total_time_minutes, notes, nutrition, photo_urls,
-                   created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   rating, is_favourite, is_pinned, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (rid, user["id"], recipe["title"], recipe.get("description", ""),
                  json.dumps(recipe.get("ingredients", [])), json.dumps(recipe.get("directions", [])),
                  recipe.get("servings"), recipe.get("prep_time_minutes"), recipe.get("cook_time_minutes"),
-                 recipe.get("total_time_minutes"),
-                 f"Part of menu: {menu_title}\nCourse: {course.get('course_name', '')}\nWine pairing: {course.get('wine_pairing', 'N/A')}\nPlating: {course.get('plating_tip', 'N/A')}",
-                 json.dumps({}), json.dumps([]), now, now),
+                 recipe.get("total_time_minutes"), notes,
+                 json.dumps(nutrition), json.dumps(photo_urls),
+                 0, 0, 0, now, now),
             )
+
             # Add tags
+            tags_added = []
             for tname in recipe.get("suggested_tags", []):
                 tid = f"tag-{uuid.uuid4().hex[:8]}"
                 await conn.execute("INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
@@ -183,7 +222,16 @@ async def save_menu_recipes(request: Request, courses: list = []):
                 row = await cur.fetchone()
                 if row:
                     await conn.execute("INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)", (rid, row["id"]))
-            saved_ids.append({"id": rid, "title": recipe["title"], "course": course.get("course_name", "")})
+                    tags_added.append(tname)
+
+            saved_ids.append({
+                "id": rid,
+                "title": recipe["title"],
+                "course": course.get("course_name", ""),
+                "photo": photo_urls[0] if photo_urls else None,
+                "tags": tags_added,
+                "has_nutrition": bool(nutrition),
+            })
 
         # Link all menu recipes together
         for i, item in enumerate(saved_ids):
