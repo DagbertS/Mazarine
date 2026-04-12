@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mazarine</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F4D6;</text></svg>">
+</head>
+<body>
+  <div id="app" class="app">
+    <div class="loading" style="min-height:100vh;display:flex;align-items:center;justify-content:center">
+      <div class="spinner"></div>
+    </div>
+  </div>
+
+  <!-- API Client -->
+  <script src="/static/js/api.js"></script>
+
+  <!-- Components -->
+  <script src="/static/js/components/modal.js"></script>
+  <script src="/static/js/components/header.js"></script>
+  <script src="/static/js/components/recipe-card.js"></script>
+  <script src="/static/js/components/timer.js"></script>
+
+  <!-- Pages -->
+  <script src="/static/js/pages/login.js"></script>
+  <script src="/static/js/pages/home.js"></script>
+  <script src="/static/js/pages/recipes.js"></script>
+  <script src="/static/js/pages/recipe-detail.js"></script>
+  <script src="/static/js/pages/recipe-edit.js"></script>
+  <script src="/static/js/pages/cooking.js"></script>
+  <script src="/static/js/pages/planner.js"></script>
+  <script src="/static/js/pages/shopping.js"></script>
+  <script src="/static/js/pages/admin.js"></script>
+  <script src="/static/js/pages/menu-builder.js"></script>
+  <script src="/static/js/pages/ingredient-search.js"></script>
+
+  <!-- App Router -->
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

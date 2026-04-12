@@ -1,0 +1,47 @@
+mazarine:
+  secret_key: 'mazarine-dev-secret-change-in-production'
+  db_path: 'mazarine.db'
+  upload_dir: 'uploads'
+  max_upload_mb: 10
+  port: 8000
+
+ai:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  auto_enrich: true
+
+import:
+  timeout_seconds: 30
+  max_retries: 2
+
+defaults:
+  dietary_tags:
+    - Vegan
+    - Vegetarian
+    - Gluten-Free
+    - Dairy-Free
+    - Keto
+    - Paleo
+    - Low-Carb
+    - Nut-Free
+    - Sugar-Free
+    - Halal
+    - Kosher
+
+  aisle_categories:
+    - Produce
+    - Dairy & Eggs
+    - Meat & Seafood
+    - Bakery
+    - Frozen
+    - Canned Goods
+    - Pasta & Grains
+    - Snacks
+    - Beverages
+    - Condiments & Sauces
+    - Spices & Seasonings
+    - Baking
+    - Oils & Vinegars
+    - International
+    - Deli
+    - Other
