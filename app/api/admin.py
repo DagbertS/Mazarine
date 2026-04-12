@@ -104,10 +104,20 @@ async def unblock_user(user_id: str, request: Request):
     finally:
         await conn.close()
 
+class SetPasswordRequest(BaseModel):
+    password: Optional[str] = None
+
 @router.post("/users/{user_id}/reset-password")
 async def reset_password(user_id: str, request: Request):
     await require_admin(request)
-    new_password = uuid.uuid4().hex[:12]
+    # Check if a specific password was provided in the body
+    try:
+        body = await request.json()
+        new_password = body.get("password") if body else None
+    except Exception:
+        new_password = None
+    if not new_password:
+        new_password = uuid.uuid4().hex[:12]
     salt = os.urandom(32).hex()
     pw_hash = hashlib.pbkdf2_hmac("sha256", new_password.encode(), salt.encode(), 100_000).hex()
     conn = await get_conn()
@@ -117,6 +127,21 @@ async def reset_password(user_id: str, request: Request):
         await conn.execute("UPDATE sessions SET revoked = 1 WHERE user_id = ?", (user_id,))
         await conn.commit()
         return {"status": "password_reset", "new_password": new_password}
+    finally:
+        await conn.close()
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str, request: Request):
+    admin = await require_admin(request)
+    if admin["id"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    conn = await get_conn()
+    try:
+        await conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        await conn.execute("DELETE FROM activity_log WHERE user_id = ?", (user_id,))
+        await conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        await conn.commit()
+        return {"status": "deleted"}
     finally:
         await conn.close()
 
