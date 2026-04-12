@@ -32,9 +32,9 @@ async def lifespan(app: FastAPI):
         count = (await cur.fetchone())[0]
         if count == 0:
             from app.auth import create_user, confirm_email
-            result = await create_user("admin@mazarine.app", "admin", "admin123", role="admin")
+            result = await create_user("admin@mazarine.app", "admin", "admin2026!", role="admin")
             await confirm_email(result["confirmation_token"])
-            print("Default admin created: admin / admin123")
+            print("Default admin created: admin / admin2026!")
     finally:
         await conn.close()
 
