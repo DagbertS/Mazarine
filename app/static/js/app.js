@@ -22,6 +22,11 @@ window.app = {
     const hash = location.hash.slice(1) || 'home';
     const root = document.getElementById('app');
 
+    // Clean up any leftover modal overlays or stale UI from previous routes
+    closeModal();
+    const staleOverlay = document.getElementById('modalOverlay');
+    if (staleOverlay) staleOverlay.remove();
+
     if (!this.user && hash !== 'login' && !hash.startsWith('confirm/')) {
       root.innerHTML = renderLoginPage();
       return;

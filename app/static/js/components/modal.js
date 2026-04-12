@@ -1,12 +1,14 @@
 function showModal(title, bodyHtml, actions) {
-  let overlay = document.getElementById('modalOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'modalOverlay';
-    overlay.className = 'modal-overlay';
-    overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
-    document.body.appendChild(overlay);
-  }
+  // Remove any existing overlay first
+  const existing = document.getElementById('modalOverlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modalOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+  document.body.appendChild(overlay);
+
   overlay.innerHTML = `
     <div class="modal">
       <h3 class="modal-title">${title}</h3>
@@ -18,7 +20,11 @@ function showModal(title, bodyHtml, actions) {
 
 function closeModal() {
   const overlay = document.getElementById('modalOverlay');
-  if (overlay) { overlay.classList.remove('visible'); }
+  if (overlay) {
+    overlay.classList.remove('visible');
+    // Fully remove after transition
+    setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 250);
+  }
 }
 
 function toast(message, type = 'info') {
@@ -29,11 +35,15 @@ function toast(message, type = 'info') {
     container.className = 'toast-container';
     document.body.appendChild(container);
   }
+  // Limit max visible toasts to 3
+  while (container.children.length >= 3) {
+    container.firstChild.remove();
+  }
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.textContent = message;
   container.appendChild(t);
-  setTimeout(() => { t.remove(); }, 3500);
+  setTimeout(() => { if (t.parentNode) t.remove(); }, 3500);
 }
 
 window.showModal = showModal;
