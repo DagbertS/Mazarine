@@ -124,7 +124,20 @@ async function generateMenu() {
     renderMenuResult(menu);
     toast('Menu generated!', 'success');
   } catch(e) {
-    toast(e.message, 'error');
+    const result = document.getElementById('menuResult');
+    const msg = e.message || 'Unknown error';
+    const isApiKey = msg.toLowerCase().includes('anthropic_api_key') || msg.toLowerCase().includes('ai not configured');
+    result.classList.remove('hidden');
+    result.innerHTML = `
+      <div style="border-top:1px solid var(--border);padding-top:2rem">
+        <div class="empty-state">
+          <div class="icon">${isApiKey ? '&#x1F511;' : '&#x26A0;'}</div>
+          <h3>${isApiKey ? 'AI Not Configured' : 'Menu Generation Failed'}</h3>
+          <p>${esc(msg)}</p>
+          ${isApiKey ? '<p class="text-sm text-muted mt-1">Add your ANTHROPIC_API_KEY in the Railway Variables tab, or in a local .env file.</p>' : ''}
+        </div>
+      </div>`;
+    toast(msg, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Generate Menu';
