@@ -177,6 +177,19 @@ async function saveRecipe(e, recipeId) {
 
   try {
     if (isNew) {
+      // Check for duplicates before creating
+      const dupCheck = await api.post('/api/check-duplicate', { title: body.title, ingredients: body.ingredients });
+      if (dupCheck.has_duplicates) {
+        // Show comparison modal — pass a callback to do the actual save
+        showDuplicateModalForCreate(body, dupCheck.duplicates[0], async () => {
+          try {
+            const res = await api.post('/api/recipes', body);
+            toast('Recipe created!', 'success');
+            app.goto(`recipe/${res.id}`);
+          } catch(err2) { toast(err2.message, 'error'); }
+        });
+        return;
+      }
       const res = await api.post('/api/recipes', body);
       toast('Recipe created!', 'success');
       app.goto(`recipe/${res.id}`);

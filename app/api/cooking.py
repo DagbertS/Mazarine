@@ -16,6 +16,8 @@ router = APIRouter(prefix="/api", tags=["cooking"])
 class ImportRequest(BaseModel):
     url: str
     auto_save: Optional[bool] = False
+    force_save: Optional[bool] = False  # Skip duplicate check
+    replace_id: Optional[str] = None    # Replace an existing recipe instead of creating new
 
 @router.get("/recipes/{recipe_id}/cook")
 async def get_cooking_data(recipe_id: str, request: Request, servings: Optional[int] = None, units: Optional[str] = None):
@@ -71,72 +73,107 @@ async def import_recipe(body: ImportRequest, request: Request):
 
     await log_activity(user["id"], "import", {"url": body.url, "title": data.get("title", "")})
 
-    if body.auto_save:
-        rid = f"rcp-{uuid.uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat()
-        conn = await get_conn()
-        try:
-            await conn.execute(
-                """INSERT INTO recipes (id, user_id, title, description, ingredients, directions, servings,
-                   prep_time_minutes, cook_time_minutes, total_time_minutes, source_url, source_name,
-                   notes, nutrition, photo_urls, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (rid, user["id"], data["title"], data.get("description", ""),
-                 json.dumps(data.get("ingredients", [])), json.dumps(data.get("directions", [])),
-                 data.get("servings"), data.get("prep_time_minutes"), data.get("cook_time_minutes"),
-                 data.get("total_time_minutes"), data.get("source_url"), data.get("source_name"),
-                 "", json.dumps(data.get("nutrition", {})),
-                 json.dumps(data.get("photo_urls", [])), now, now),
-            )
-            await conn.execute("UPDATE users SET upload_count = upload_count + 1, updated_at = ? WHERE id = ?",
-                               (now, user["id"]))
-            await conn.commit()
+    # Check for duplicates before saving (unless force_save)
+    if body.auto_save and not body.force_save:
+        from app.services.duplicate_detector import find_duplicates
+        duplicates = await find_duplicates(data, user["id"], threshold=0.55)
+        if duplicates:
+            # Return the imported data + duplicates for the UI to handle
+            data["saved"] = False
+            data["duplicates"] = duplicates
+            data["duplicate_action_required"] = True
+            return data
 
-            enriched = await enrich_recipe(data)
-            if enriched:
-                updates = {}
-                if enriched.get("description") and not data.get("description"):
-                    updates["description"] = enriched["description"]
-                if enriched.get("nutrition"):
-                    updates["nutrition"] = json.dumps(enriched["nutrition"])
-                if enriched.get("prep_time_minutes") and not data.get("prep_time_minutes"):
-                    updates["prep_time_minutes"] = enriched["prep_time_minutes"]
-                if enriched.get("cook_time_minutes") and not data.get("cook_time_minutes"):
-                    updates["cook_time_minutes"] = enriched["cook_time_minutes"]
-                if enriched.get("total_time_minutes") and not data.get("total_time_minutes"):
-                    updates["total_time_minutes"] = enriched["total_time_minutes"]
-                if updates:
-                    updates["updated_at"] = now
-                    set_clause = ", ".join(f"{k} = ?" for k in updates)
-                    vals = list(updates.values()) + [rid]
-                    await conn.execute(f"UPDATE recipes SET {set_clause} WHERE id = ?", vals)
-                    await conn.commit()
-
-                if enriched.get("suggested_tags"):
-                    for tname in enriched["suggested_tags"]:
-                        tid = f"tag-{uuid.uuid4().hex[:8]}"
-                        await conn.execute("INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
-                                           (tid, user["id"], tname, "auto"))
-                        cur = await conn.execute("SELECT id FROM tags WHERE user_id = ? AND name = ?",
-                                                 (user["id"], tname))
-                        row = await cur.fetchone()
-                        if row:
-                            await conn.execute("INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)",
-                                               (rid, row["id"]))
-                    await conn.commit()
-                data["enriched"] = enriched
-
-            data["id"] = rid
-            data["saved"] = True
-        finally:
-            await conn.close()
+    if body.auto_save or body.force_save:
+        rid = await _save_imported_recipe(data, user, replace_id=body.replace_id)
+        data["id"] = rid
+        data["saved"] = True
+        data["duplicate_action_required"] = False
     else:
         data["saved"] = False
-        enriched = await enrich_recipe(data)
+        enriched = await enrich_recipe(data, force_tags=True)
         if enriched:
             data["enriched"] = enriched
 
     return data
+
+
+async def _save_imported_recipe(data: dict, user: dict, replace_id: str = None) -> str:
+    """Save an imported recipe, optionally replacing an existing one."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn = await get_conn()
+    try:
+        if replace_id:
+            # Delete the old recipe first
+            await conn.execute("DELETE FROM recipe_categories WHERE recipe_id = ?", (replace_id,))
+            await conn.execute("DELETE FROM recipe_tags WHERE recipe_id = ?", (replace_id,))
+            await conn.execute("DELETE FROM recipe_links WHERE recipe_id = ? OR linked_recipe_id = ?", (replace_id, replace_id))
+            await conn.execute("DELETE FROM recipes WHERE id = ? AND user_id = ?", (replace_id, user["id"]))
+            await conn.commit()
+
+        rid = f"rcp-{uuid.uuid4().hex[:12]}"
+        await conn.execute(
+            """INSERT INTO recipes (id, user_id, title, description, ingredients, directions, servings,
+               prep_time_minutes, cook_time_minutes, total_time_minutes, source_url, source_name,
+               notes, nutrition, photo_urls, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rid, user["id"], data["title"], data.get("description", ""),
+             json.dumps(data.get("ingredients", [])), json.dumps(data.get("directions", [])),
+             data.get("servings"), data.get("prep_time_minutes"), data.get("cook_time_minutes"),
+             data.get("total_time_minutes"), data.get("source_url"), data.get("source_name"),
+             "", json.dumps(data.get("nutrition", {})),
+             json.dumps(data.get("photo_urls", [])), now, now),
+        )
+        await conn.execute("UPDATE users SET upload_count = upload_count + 1, updated_at = ? WHERE id = ?",
+                           (now, user["id"]))
+        await conn.commit()
+
+        enriched = await enrich_recipe(data, force_tags=True)
+        if enriched:
+            updates = {}
+            if enriched.get("description") and not data.get("description"):
+                updates["description"] = enriched["description"]
+            if enriched.get("nutrition"):
+                updates["nutrition"] = json.dumps(enriched["nutrition"])
+            if enriched.get("prep_time_minutes") and not data.get("prep_time_minutes"):
+                updates["prep_time_minutes"] = enriched["prep_time_minutes"]
+            if enriched.get("cook_time_minutes") and not data.get("cook_time_minutes"):
+                updates["cook_time_minutes"] = enriched["cook_time_minutes"]
+            if enriched.get("total_time_minutes") and not data.get("total_time_minutes"):
+                updates["total_time_minutes"] = enriched["total_time_minutes"]
+            if updates:
+                updates["updated_at"] = now
+                set_clause = ", ".join(f"{k} = ?" for k in updates)
+                vals = list(updates.values()) + [rid]
+                await conn.execute(f"UPDATE recipes SET {set_clause} WHERE id = ?", vals)
+                await conn.commit()
+
+            if enriched.get("suggested_tags"):
+                for tname in enriched["suggested_tags"]:
+                    tid = f"tag-{uuid.uuid4().hex[:8]}"
+                    await conn.execute("INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
+                                       (tid, user["id"], tname, "auto"))
+                    cur = await conn.execute("SELECT id FROM tags WHERE user_id = ? AND name = ?",
+                                             (user["id"], tname))
+                    row = await cur.fetchone()
+                    if row:
+                        await conn.execute("INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)",
+                                           (rid, row["id"]))
+                await conn.commit()
+
+        return rid
+    finally:
+        await conn.close()
+
+
+@router.post("/check-duplicate")
+async def check_duplicate(request: Request):
+    """Check if a recipe (by title and ingredients) has duplicates in the user's collection."""
+    user = await get_current_user(request)
+    body = await request.json()
+    from app.services.duplicate_detector import find_duplicates
+    duplicates = await find_duplicates(body, user["id"], threshold=0.55)
+    return {"duplicates": duplicates, "has_duplicates": len(duplicates) > 0}
 
 @router.post("/recipes/{recipe_id}/enrich")
 async def enrich_existing(recipe_id: str, request: Request):

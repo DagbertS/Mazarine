@@ -124,6 +124,14 @@ async function doImport() {
   closeModal();
   try {
     const data = await api.post('/api/import', { url, auto_save: true });
+
+    // Check if duplicate was detected
+    if (data.duplicate_action_required && data.duplicates && data.duplicates.length > 0) {
+      // Show side-by-side comparison modal
+      showDuplicateModal(data, data.duplicates[0]);
+      return;
+    }
+
     toast(`Imported: ${data.title}`, 'success');
     if (data.id) app.goto(`recipe/${data.id}`);
     else app.goto('recipes');
