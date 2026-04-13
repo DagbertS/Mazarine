@@ -2,6 +2,8 @@ from fastapi import APIRouter, Request, Response, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from app.auth import create_user, confirm_email, login, logout, get_current_user, resend_confirmation_code
+from app.database import get_conn
+from app.services.email import send_confirmation_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,21 +23,51 @@ class ResendCodeRequest(BaseModel):
 
 @router.post("/register")
 async def register(body: RegisterRequest):
-    # Email is also the username
     email = body.email.strip().lower()
     if not email or '@' not in email:
         raise HTTPException(status_code=400, detail="Please enter a valid email address")
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    # Check if a pending account already exists — if so, resend code instead of failing
+    conn = await get_conn()
+    try:
+        cur = await conn.execute("SELECT id, status FROM users WHERE email = ?", (email,))
+        existing = await cur.fetchone()
+        if existing:
+            if existing["status"] == "pending":
+                # Re-register: update password and resend code
+                import hashlib, os, random
+                salt = os.urandom(32).hex()
+                pw_hash = hashlib.pbkdf2_hmac("sha256", body.password.encode(), salt.encode(), 100_000).hex()
+                code = str(random.randint(100000, 999999))
+                from datetime import datetime, timezone
+                await conn.execute(
+                    "UPDATE users SET password_hash=?, salt=?, confirmation_token=?, updated_at=? WHERE id=?",
+                    (pw_hash, salt, code, datetime.now(timezone.utc).isoformat(), existing["id"]),
+                )
+                await conn.commit()
+                print(f"[MAZARINE] New confirmation code for {email}: {code}")
+                await send_confirmation_email(email, code)
+                return {
+                    "status": "ok",
+                    "message": "A 6-digit confirmation code has been sent to your email address.",
+                    "email": email,
+                    "_dev_code": code,
+                }
+            else:
+                raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in.")
+    finally:
+        await conn.close()
+
     try:
         result = await create_user(email, email, body.password)
-        # In production, send the code via email. For now, log it and return it.
         print(f"[MAZARINE] Confirmation code for {email}: {result['confirmation_code']}")
+        await send_confirmation_email(email, result["confirmation_code"])
         return {
             "status": "ok",
             "message": "A 6-digit confirmation code has been sent to your email address.",
             "email": email,
-            # Include code in response for development/testing — remove in production
             "_dev_code": result["confirmation_code"],
         }
     except Exception as e:
@@ -53,7 +85,6 @@ async def confirm(body: ConfirmRequest):
         raise HTTPException(status_code=400, detail="Invalid or expired code")
     return {"status": "ok", "message": "Account confirmed! You can now sign in."}
 
-# Keep old GET endpoint for backwards compat
 @router.get("/confirm/{token}")
 async def confirm_get(token: str):
     ok = await confirm_email(token)
@@ -67,6 +98,7 @@ async def resend_code(body: ResendCodeRequest):
     if not result:
         raise HTTPException(status_code=400, detail="No pending account found for this email")
     print(f"[MAZARINE] New confirmation code for {body.email}: {result['code']}")
+    await send_confirmation_email(body.email, result["code"])
     return {
         "status": "ok",
         "message": "A new confirmation code has been sent.",
