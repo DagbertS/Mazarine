@@ -139,12 +139,26 @@ static_dir = Path(__file__).parent / "static"
 upload_dir_path = Path(get_upload_dir())
 os.makedirs(upload_dir_path, exist_ok=True)
 
+# Generate a cache-busting version from the current deployment time
+import hashlib, time as _time
+_build_version = hashlib.md5(str(_time.time()).encode()).hexdigest()[:10]
+
 app.mount("/uploads", StaticFiles(directory=str(upload_dir_path)), name="uploads")
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 @app.get("/")
 async def serve_ui():
-    return FileResponse(str(static_dir / "index.html"))
+    from fastapi.responses import HTMLResponse
+    html_path = static_dir / "index.html"
+    html = html_path.read_text()
+    # Inject cache-busting version into all static asset URLs
+    html = html.replace('.css"', f'.css?v={_build_version}"')
+    html = html.replace('.js"', f'.js?v={_build_version}"')
+    return HTMLResponse(content=html, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 @app.get("/manifest.json")
 async def serve_manifest():
