@@ -78,7 +78,6 @@ async function renderMenuBuilderPage() {
         <div class="form-group">
           <label class="form-label">Ingredients to Avoid (optional)</label>
           <input class="form-input" id="menuAvoid" placeholder="e.g. shellfish, cilantro...">
-          <p class="form-hint">Comma-separated list of ingredients to exclude</p>
         </div>
 
         <div class="form-group">
@@ -135,6 +134,7 @@ async function generateMenu() {
           <h3>${isApiKey ? 'AI Not Configured' : 'Menu Generation Failed'}</h3>
           <p>${esc(msg)}</p>
           ${isApiKey ? '<p class="text-sm text-muted mt-1">Add your ANTHROPIC_API_KEY in the Railway Variables tab, or in a local .env file.</p>' : ''}
+          <button class="btn mt-2" onclick="generateMenu()">Try Again</button>
         </div>
       </div>`;
     toast(msg, 'error');
@@ -158,83 +158,138 @@ function renderMenuResult(menu) {
           ${menu.total_estimated_time_minutes ? `<p class="text-sm text-muted mt-1">Estimated total time: ${menu.total_estimated_time_minutes} minutes</p>` : ''}
         </div>
         <div class="flex gap-1">
-          <button class="btn btn-primary" onclick="saveMenu()">Save All Recipes</button>
+          <button class="btn btn-primary" onclick="saveSelectedMenuRecipes()" id="saveMenuBtn">Save Selected</button>
           <button class="btn" onclick="generateMenu()">Regenerate</button>
         </div>
       </div>
 
-      ${courses.map((c, i) => `
-        <div class="menu-course" style="margin-bottom:2.5rem;padding:2rem;background:var(--bg-card);border:1px solid var(--border-light);border-radius:var(--radius-lg)">
-          <div class="flex-between mb-1">
-            <div>
-              <span class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.12em">${esc(c.course_name || `Course ${i+1}`)}</span>
-              <h3 style="font-family:var(--font-serif);font-size:1.4rem;margin-top:0.25rem">${esc(c.recipe?.title || '')}</h3>
-            </div>
-            ${c.recipe?.total_time_minutes ? `<span class="tag">${c.recipe.total_time_minutes}m</span>` : ''}
-          </div>
-          ${c.recipe?.description ? `<p class="text-muted" style="font-style:italic;margin-bottom:1rem">${esc(c.recipe.description)}</p>` : ''}
+      <!-- Select all / none -->
+      <div class="flex-between mb-2" style="padding:0.5rem 0;border-bottom:1px solid var(--border-light)">
+        <label style="font-size:0.85rem;cursor:pointer;display:flex;align-items:center;gap:0.5rem">
+          <input type="checkbox" id="menuSelectAll" checked onchange="toggleAllMenuRecipes(this.checked)">
+          <span>Select all recipes</span>
+        </label>
+        <span class="text-sm text-muted" id="menuSelectedCount">${courses.length} of ${courses.length} selected</span>
+      </div>
 
-          <div class="form-row" style="gap:2rem">
+      ${courses.map((c, i) => `
+        <div class="menu-course" style="margin-bottom:1.5rem;padding:1.5rem;background:var(--bg-card);border:1px solid var(--border-light);border-radius:var(--radius-lg);position:relative">
+          <!-- Checkbox -->
+          <label style="position:absolute;top:1rem;right:1rem;cursor:pointer;display:flex;align-items:center;gap:0.4rem">
+            <input type="checkbox" class="menu-recipe-check" data-index="${i}" checked onchange="updateMenuSelectionCount()">
+            <span class="text-xs text-muted">Add to collection</span>
+          </label>
+
+          <div class="mb-1">
+            <span class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.12em">${esc(c.course_name || `Course ${i+1}`)}</span>
+            <h3 style="font-family:var(--font-serif);font-size:1.3rem;margin-top:0.2rem">${esc(c.recipe?.title || '')}</h3>
+          </div>
+          ${c.recipe?.description ? `<p class="text-muted text-sm" style="font-style:italic;margin-bottom:0.75rem">${esc(c.recipe.description)}</p>` : ''}
+
+          <div class="form-row" style="gap:1.5rem">
             <div style="flex:1">
               <div class="recipe-section-title">Ingredients</div>
               ${(c.recipe?.ingredients || []).map(ing =>
-                `<div style="padding:0.3rem 0;border-bottom:1px solid var(--border-light);font-size:0.9rem">
-                  <strong>${esc(ing.qty)} ${esc(ing.unit)}</strong> ${esc(ing.name)}${ing.note ? ` <em class="text-muted">${esc(ing.note)}</em>` : ''}
+                `<div style="padding:0.25rem 0;border-bottom:1px solid var(--border-light);font-size:0.85rem">
+                  <strong>${esc(ing.qty)} ${esc(ing.unit)}</strong> ${esc(ing.name)}
                 </div>`
               ).join('')}
             </div>
             <div style="flex:1.5">
               <div class="recipe-section-title">Directions</div>
               ${(c.recipe?.directions || []).map(d =>
-                `<div class="direction-step" style="padding:0.5rem 0">
-                  <span class="step-number" style="font-size:1.1rem">${d.step}</span>
-                  <span class="step-text" style="font-size:0.9rem">${esc(d.text)}</span>
-                  ${d.timer_minutes ? `<span class="step-timer" onclick="startTimer('${esc(c.recipe?.title)} Step ${d.step}', ${d.timer_minutes})">&#x23F1; ${d.timer_minutes}m</span>` : ''}
+                `<div class="direction-step" style="padding:0.35rem 0">
+                  <span class="step-number" style="font-size:1rem">${d.step}</span>
+                  <span class="step-text" style="font-size:0.85rem">${esc(d.text)}</span>
                 </div>`
               ).join('')}
             </div>
           </div>
 
           ${c.wine_pairing || c.plating_tip ? `
-            <div class="flex gap-2 mt-2" style="padding-top:1rem;border-top:1px solid var(--border-light)">
-              ${c.wine_pairing ? `<div class="text-sm"><strong>Wine pairing:</strong> ${esc(c.wine_pairing)}</div>` : ''}
-              ${c.plating_tip ? `<div class="text-sm"><strong>Plating:</strong> ${esc(c.plating_tip)}</div>` : ''}
+            <div class="flex gap-2 mt-1" style="padding-top:0.75rem;border-top:1px solid var(--border-light);font-size:0.8rem;color:var(--text-secondary)">
+              ${c.wine_pairing ? `<span><strong>Wine:</strong> ${esc(c.wine_pairing)}</span>` : ''}
+              ${c.plating_tip ? `<span><strong>Plating:</strong> ${esc(c.plating_tip)}</span>` : ''}
             </div>` : ''}
-
-          ${c.recipe?.suggested_tags?.length ? `
-            <div class="flex gap-1 mt-1">${c.recipe.suggested_tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
         </div>
       `).join('')}
 
       ${menu.timeline ? `
-        <div style="padding:1.5rem;background:var(--bg-hover);border-radius:var(--radius-lg);margin-bottom:1.5rem">
-          <div class="recipe-section-title">Preparation Timeline</div>
-          <p style="white-space:pre-line">${esc(menu.timeline)}</p>
-        </div>` : ''}
-
-      ${menu.shopping_summary?.length ? `
-        <div style="padding:1.5rem;background:var(--bg-hover);border-radius:var(--radius-lg)">
-          <div class="recipe-section-title">Shopping Summary</div>
-          <div style="columns:2;gap:2rem">
-            ${menu.shopping_summary.map(item => `<div style="padding:0.2rem 0;font-size:0.9rem">${esc(item)}</div>`).join('')}
-          </div>
+        <div style="padding:1rem;background:var(--bg-hover);border-radius:var(--radius-lg);margin-bottom:1rem;font-size:0.9rem">
+          <strong class="text-xs" style="text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted)">Timeline</strong>
+          <p style="margin-top:0.3rem">${esc(menu.timeline)}</p>
         </div>` : ''}
     </div>`;
 }
 
-async function saveMenu() {
+function toggleAllMenuRecipes(checked) {
+  document.querySelectorAll('.menu-recipe-check').forEach(cb => cb.checked = checked);
+  updateMenuSelectionCount();
+}
+
+function updateMenuSelectionCount() {
+  const all = document.querySelectorAll('.menu-recipe-check');
+  const selected = document.querySelectorAll('.menu-recipe-check:checked');
+  const countEl = document.getElementById('menuSelectedCount');
+  const selectAllEl = document.getElementById('menuSelectAll');
+  if (countEl) countEl.textContent = `${selected.length} of ${all.length} selected`;
+  if (selectAllEl) selectAllEl.checked = selected.length === all.length;
+}
+
+async function saveSelectedMenuRecipes() {
   if (!_generatedMenu) return;
+
+  // Get selected course indices
+  const selectedIndices = [];
+  document.querySelectorAll('.menu-recipe-check:checked').forEach(cb => {
+    selectedIndices.push(parseInt(cb.dataset.index));
+  });
+
+  if (selectedIndices.length === 0) {
+    toast('No recipes selected', 'error');
+    return;
+  }
+
+  const selectedCourses = selectedIndices.map(i => _generatedMenu.courses[i]);
+  const btn = document.getElementById('saveMenuBtn');
+  btn.disabled = true;
+  btn.textContent = `Saving ${selectedCourses.length} recipes...`;
+
   try {
     const res = await api.post('/api/menu/save', {
-      courses: _generatedMenu.courses,
+      courses: selectedCourses,
       menu_title: _generatedMenu.menu_title,
     });
-    toast(`Saved ${res.recipes.length} recipes to your collection!`, 'success');
+
+    // Check for any duplicates that were found
+    const saved = res.recipes.filter(r => r.status !== 'duplicate');
+    const dupes = res.recipes.filter(r => r.status === 'duplicate');
+
+    if (dupes.length > 0) {
+      toast(`Saved ${saved.length} recipes. ${dupes.length} possible duplicate(s) found.`, 'info');
+      // Show duplicates for user to resolve
+      for (const dupe of dupes) {
+        showDuplicateModal(dupe.new_recipe, dupe.match);
+        break; // Show one at a time
+      }
+    } else {
+      toast(`Saved ${saved.length} recipes to your collection!`, 'success');
+    }
+
+    if (saved.length > 0) {
+      // Show what was saved
+      btn.textContent = `${saved.length} saved!`;
+      setTimeout(() => { btn.textContent = 'Save Selected'; btn.disabled = false; }, 2000);
+    }
   } catch(e) {
     toast(e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Save Selected';
   }
 }
 
 window.renderMenuBuilderPage = renderMenuBuilderPage;
 window.generateMenu = generateMenu;
-window.saveMenu = saveMenu;
+window.saveSelectedMenuRecipes = saveSelectedMenuRecipes;
+window.toggleAllMenuRecipes = toggleAllMenuRecipes;
+window.updateMenuSelectionCount = updateMenuSelectionCount;

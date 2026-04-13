@@ -199,57 +199,65 @@ STRICT LIMITS per recipe:
         raise HTTPException(status_code=500, detail=f"Menu generation failed: {error_msg[:150]}")
 
 @router.post("/save")
-async def save_menu_recipes(request: Request, courses: list = []):
-    """Save all recipes from a generated menu, fully enriched with AI data and photos."""
+async def save_menu_recipes(request: Request):
+    """Save selected recipes from a generated menu with duplicate check, AI enrichment, and photo search."""
     user = await get_current_user(request)
     body = await request.json()
     courses = body.get("courses", [])
     menu_title = body.get("menu_title", "Menu")
-    saved_ids = []
+    results = []
 
-    # Find photos for all recipes in parallel
     from app.services.photo_finder import find_recipe_photo
+    from app.services.enrichment import enrich_recipe
+    from app.services.duplicate_detector import find_duplicates
 
-    conn = await get_conn()
-    try:
-        for course in courses:
-            recipe = course.get("recipe", {})
-            if not recipe.get("title"):
-                continue
-            rid = f"rcp-{uuid.uuid4().hex[:12]}"
-            now = datetime.now(timezone.utc).isoformat()
+    for course in courses:
+        recipe = course.get("recipe", {})
+        if not recipe.get("title"):
+            continue
 
-            # Get nutrition from the generated recipe (already included in prompt)
-            nutrition = recipe.get("nutrition", {})
+        # 1. Check for duplicates
+        duplicates = await find_duplicates(recipe, user["id"], threshold=0.55)
+        if duplicates:
+            best_match = duplicates[0]
+            results.append({
+                "title": recipe["title"],
+                "course": course.get("course_name", ""),
+                "status": "duplicate",
+                "match": best_match,
+                "new_recipe": recipe,
+            })
+            continue
 
-            # Find a photo for this recipe
-            photo_url = await find_recipe_photo(recipe["title"])
-            photo_urls = [photo_url] if photo_url else []
+        # 2. Enrich with AI (fill any missing fields, add tags)
+        enriched = await enrich_recipe(recipe, force_tags=True)
+        if enriched:
+            if enriched.get("nutrition") and not recipe.get("nutrition"):
+                recipe["nutrition"] = enriched["nutrition"]
+            if enriched.get("description") and not recipe.get("description"):
+                recipe["description"] = enriched["description"]
+            extra_tags = enriched.get("suggested_tags", [])
+            existing_tags = recipe.get("suggested_tags", [])
+            recipe["suggested_tags"] = list(set(existing_tags + extra_tags))
 
-            # Build rich notes with menu context
-            notes_parts = [f"Part of menu: {menu_title}"]
-            if course.get("course_name"):
-                notes_parts.append(f"Course: {course['course_name']}")
-            if course.get("wine_pairing"):
-                notes_parts.append(f"Wine pairing: {course['wine_pairing']}")
-            if course.get("plating_tip"):
-                notes_parts.append(f"Plating: {course['plating_tip']}")
-            notes = "\n".join(notes_parts)
+        # 3. Find a photo
+        photo_url = await find_recipe_photo(recipe["title"])
+        photo_urls = [photo_url] if photo_url else []
 
-            # If nutrition is missing, run AI enrichment
-            if not nutrition:
-                from app.services.enrichment import enrich_recipe
-                enriched = await enrich_recipe(recipe, force_tags=True)
-                if enriched:
-                    nutrition = enriched.get("nutrition", {})
-                    # Merge any extra tags from enrichment
-                    extra_tags = enriched.get("suggested_tags", [])
-                    existing_tags = recipe.get("suggested_tags", [])
-                    recipe["suggested_tags"] = list(set(existing_tags + extra_tags))
-                    # Fill description if missing
-                    if enriched.get("description") and not recipe.get("description"):
-                        recipe["description"] = enriched["description"]
+        # 4. Build notes
+        notes_parts = [f"Part of menu: {menu_title}"]
+        if course.get("course_name"):
+            notes_parts.append(f"Course: {course['course_name']}")
+        if course.get("wine_pairing"):
+            notes_parts.append(f"Wine pairing: {course['wine_pairing']}")
+        if course.get("plating_tip"):
+            notes_parts.append(f"Plating: {course['plating_tip']}")
 
+        # 5. Save to database
+        rid = f"rcp-{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        conn = await get_conn()
+        try:
             await conn.execute(
                 """INSERT INTO recipes (id, user_id, title, description, ingredients, directions, servings,
                    prep_time_minutes, cook_time_minutes, total_time_minutes, notes, nutrition, photo_urls,
@@ -258,8 +266,8 @@ async def save_menu_recipes(request: Request, courses: list = []):
                 (rid, user["id"], recipe["title"], recipe.get("description", ""),
                  json.dumps(recipe.get("ingredients", [])), json.dumps(recipe.get("directions", [])),
                  recipe.get("servings"), recipe.get("prep_time_minutes"), recipe.get("cook_time_minutes"),
-                 recipe.get("total_time_minutes"), notes,
-                 json.dumps(nutrition), json.dumps(photo_urls),
+                 recipe.get("total_time_minutes"), "\n".join(notes_parts),
+                 json.dumps(recipe.get("nutrition", {})), json.dumps(photo_urls),
                  0, 0, 0, now, now),
             )
 
@@ -275,27 +283,36 @@ async def save_menu_recipes(request: Request, courses: list = []):
                     await conn.execute("INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)", (rid, row["id"]))
                     tags_added.append(tname)
 
-            saved_ids.append({
+            await conn.commit()
+
+            results.append({
                 "id": rid,
                 "title": recipe["title"],
                 "course": course.get("course_name", ""),
+                "status": "saved",
                 "photo": photo_urls[0] if photo_urls else None,
                 "tags": tags_added,
-                "has_nutrition": bool(nutrition),
             })
+        finally:
+            await conn.close()
 
-        # Link all menu recipes together
-        for i, item in enumerate(saved_ids):
-            for j, other in enumerate(saved_ids):
-                if i != j:
-                    await conn.execute("INSERT OR IGNORE INTO recipe_links (recipe_id, linked_recipe_id, link_type) VALUES (?,?,?)",
-                                       (item["id"], other["id"], "menu"))
+    # Link all saved recipes together
+    saved_items = [r for r in results if r.get("id")]
+    if len(saved_items) > 1:
+        conn = await get_conn()
+        try:
+            for i, item in enumerate(saved_items):
+                for j, other in enumerate(saved_items):
+                    if i != j:
+                        await conn.execute(
+                            "INSERT OR IGNORE INTO recipe_links (recipe_id, linked_recipe_id, link_type) VALUES (?,?,?)",
+                            (item["id"], other["id"], "menu"))
+            await conn.commit()
+        finally:
+            await conn.close()
 
-        await conn.commit()
-        await log_activity(user["id"], "menu_save", {"menu": menu_title, "recipes": len(saved_ids)})
-        return {"status": "saved", "recipes": saved_ids}
-    finally:
-        await conn.close()
+    await log_activity(user["id"], "menu_save", {"menu": menu_title, "recipes": len(saved_items)})
+    return {"status": "saved", "recipes": results}
 
 
 @router.post("/search-by-ingredient")
