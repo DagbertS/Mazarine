@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
@@ -8,6 +9,29 @@ from typing import Optional
 from app.auth import get_current_user, log_activity
 from app.database import get_conn, _row_dict
 from app.config import get_ai_config
+
+
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to repair JSON that was truncated mid-stream by closing open brackets/braces."""
+    text = text.rstrip()
+    # Remove any trailing comma
+    text = text.rstrip(',').rstrip()
+    # Count open/close braces and brackets
+    open_braces = text.count('{') - text.count('}')
+    open_brackets = text.count('[') - text.count(']')
+    # Check if we're inside a string (odd number of unescaped quotes after last structure)
+    # Simple heuristic: if the last non-whitespace char isn't a structural char, close the string
+    last = text.rstrip()[-1] if text.rstrip() else ''
+    if last not in ('}', ']', '"', ',', ':'):
+        text += '"'
+    # Close any open strings that look like they're in the middle of a value
+    # Remove trailing incomplete key-value pairs
+    text = re.sub(r',\s*"[^"]*$', '', text)
+    text = re.sub(r',\s*$', '', text)
+    # Close brackets then braces
+    text += ']' * max(0, open_brackets)
+    text += '}' * max(0, open_braces)
+    return text
 
 router = APIRouter(prefix="/api/menu", tags=["menu"])
 
@@ -74,45 +98,18 @@ async def generate_menu(body: MenuRequest, request: Request):
     if existing_titles:
         existing_context = f"\nThe user already has these recipes in their collection: {', '.join(existing_titles[:20])}. You may suggest some of these if they fit, but also suggest new ones."
 
-    prompt = f"""Create a complete menu with exactly {body.num_courses} courses.
+    prompt = f"""Create a {body.num_courses}-course menu. {filter_text} {existing_context}
 
-Filters:
-{filter_text}
-{existing_context}
+Return ONLY a JSON object (no markdown, no explanation). Be BRIEF — this is critical.
 
-Return ONLY valid JSON with this structure:
-{{
-  "menu_title": "A creative name for this menu",
-  "description": "1-2 sentence description of the menu concept",
-  "total_estimated_time_minutes": <number>,
-  "courses": [
-    {{
-      "course_name": "e.g. Starter, Main, Dessert, Amuse-bouche, Soup, Fish, Cheese",
-      "recipe": {{
-        "title": "Recipe name",
-        "description": "1-2 sentence description",
-        "servings": {body.guests or 4},
-        "prep_time_minutes": <number>,
-        "cook_time_minutes": <number>,
-        "total_time_minutes": <number>,
-        "ingredients": [
-          {{"qty": "amount", "unit": "unit", "name": "ingredient", "note": "", "group": ""}}
-        ],
-        "directions": [
-          {{"step": 1, "text": "direction text", "timer_minutes": null}}
-        ],
-        "nutrition": {{"calories": <number>, "protein": <grams>, "carbs": <grams>, "fat": <grams>, "fiber": <grams>}},
-        "suggested_tags": ["tag1", "tag2"]
-      }},
-      "wine_pairing": "Optional wine suggestion",
-      "plating_tip": "Brief plating or presentation suggestion"
-    }}
-  ],
-  "shopping_summary": ["ingredient 1", "ingredient 2"],
-  "timeline": "Suggested preparation timeline, e.g. what to prep first"
-}}
+{{"menu_title":"name","description":"1 sentence","total_estimated_time_minutes":N,"courses":[{{"course_name":"Starter","recipe":{{"title":"name","description":"1 sentence","servings":{body.guests or 4},"prep_time_minutes":N,"cook_time_minutes":N,"total_time_minutes":N,"ingredients":[{{"qty":"1","unit":"cup","name":"ingredient","note":"","group":""}}],"directions":[{{"step":1,"text":"Do this.","timer_minutes":null}}],"nutrition":{{"calories":N,"protein":N,"carbs":N,"fat":N,"fiber":N}},"suggested_tags":["tag1","tag2"]}},"wine_pairing":"wine","plating_tip":"tip"}}],"shopping_summary":["item1"],"timeline":"1 sentence"}}
 
-Be creative, specific with quantities, and ensure the menu is cohesive. Each recipe must have complete, cookable ingredients and directions. Nutrition values must be estimated per serving. Include 6-8 relevant tags per recipe covering cuisine, dietary labels, meal type, and characteristics."""
+STRICT LIMITS per recipe:
+- Max 8 ingredients, short names
+- Max 4 directions, 1 short sentence each
+- Max 4 tags
+- Omit "note" and "group" if empty (use "")
+- No markdown, no code fences, just the raw JSON object"""
 
     try:
         import anthropic
@@ -137,10 +134,15 @@ Be creative, specific with quantities, and ensure the menu is cohesive. Each rec
                 try:
                     message = await client.messages.create(
                         model=model,
-                        max_tokens=4000,
+                        max_tokens=16000,
                         messages=[{"role": "user", "content": prompt}],
                     )
                     response_text = message.content[0].text
+                    # Check if response was truncated (stop_reason != "end_turn")
+                    if message.stop_reason != "end_turn":
+                        print(f"[MAZARINE] Warning: response truncated (stop_reason={message.stop_reason})")
+                        # Try to close any unclosed JSON
+                        response_text = _repair_truncated_json(response_text)
                     break
                 except Exception as model_err:
                     last_error = model_err
