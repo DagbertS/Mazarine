@@ -66,12 +66,28 @@ ALWAYS include this key:
 
 Be accurate with nutrition estimates. Return ONLY valid JSON, no markdown."""
 
-        model = ai_config.get("model", "claude-sonnet-4-20250514")
-        message = await client.messages.create(
-            model=model,
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        models = [
+            ai_config.get("model", "claude-sonnet-4-20250514"),
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-6",
+        ]
+        seen = set()
+        models = [m for m in models if m not in seen and not seen.add(m)]
+
+        message = None
+        for model in models:
+            try:
+                message = await client.messages.create(
+                    model=model,
+                    max_tokens=600,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except Exception:
+                continue
+        if not message:
+            return {}
 
         response_text = message.content[0].text
         json_text = response_text

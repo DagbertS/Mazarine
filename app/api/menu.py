@@ -116,23 +116,67 @@ Be creative, specific with quantities, and ensure the menu is cohesive. Each rec
 
     try:
         import anthropic
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        model = ai_config.get("model", "claude-sonnet-4-20250514")
-        message = await client.messages.create(
-            model=model,
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        response_text = message.content[0].text
-
-        # Extract JSON
         import re
+        import asyncio as _asyncio
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+
+        # Try models in order of preference
+        models = [
+            ai_config.get("model", "claude-sonnet-4-20250514"),
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-6",
+        ]
+        seen = set()
+        models = [m for m in models if m not in seen and not seen.add(m)]
+
+        response_text = None
+        last_error = None
+        # Retry up to 3 times total (handles 529 overload)
+        for attempt in range(3):
+            for model in models:
+                try:
+                    message = await client.messages.create(
+                        model=model,
+                        max_tokens=4000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    response_text = message.content[0].text
+                    break
+                except Exception as model_err:
+                    last_error = model_err
+                    err_str = str(model_err)
+                    print(f"[MAZARINE] Model {model} attempt {attempt+1} failed: {err_str[:100]}")
+                    # Retry on overload (529)
+                    if "529" in err_str or "overloaded" in err_str.lower():
+                        await _asyncio.sleep(2 * (attempt + 1))
+                    continue
+            if response_text:
+                break
+
+        if not response_text:
+            raise HTTPException(
+                status_code=500,
+                detail=f"All AI models failed. Last error: {str(last_error)}. Check your ANTHROPIC_API_KEY is valid."
+            )
+
+        # Extract JSON from response
         json_text = response_text
         if "```" in response_text:
             m = re.search(r"```(?:json)?\s*(.*?)```", response_text, re.DOTALL)
             if m:
                 json_text = m.group(1)
-        menu = json.loads(json_text.strip())
+
+        # Try to find JSON object in the response
+        json_text = json_text.strip()
+        if not json_text.startswith("{"):
+            # Try to find the first { in the response
+            idx = json_text.find("{")
+            if idx >= 0:
+                json_text = json_text[idx:]
+            else:
+                raise HTTPException(status_code=500, detail="AI response did not contain valid JSON. Please try again.")
+
+        menu = json.loads(json_text)
 
         await log_activity(user["id"], "menu_generate", {
             "courses": body.num_courses,
@@ -142,10 +186,15 @@ Be creative, specific with quantities, and ensure the menu is cohesive. Each rec
 
         return menu
 
+    except HTTPException:
+        raise
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"AI returned invalid JSON: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI returned invalid JSON. Please try again. ({str(e)[:80]})")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Menu generation failed: {str(e)}")
+        error_msg = str(e)
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "401" in error_msg:
+            raise HTTPException(status_code=500, detail="Invalid ANTHROPIC_API_KEY. Check your API key in settings.")
+        raise HTTPException(status_code=500, detail=f"Menu generation failed: {error_msg[:150]}")
 
 @router.post("/save")
 async def save_menu_recipes(request: Request, courses: list = []):

@@ -63,31 +63,36 @@ Return ONLY the JSON, no markdown or explanation."""
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_key)
-        model = ai_config.get("model", "claude-sonnet-4-20250514")
 
-        message = await client.messages.create(
-            model=model,
-            max_tokens=2000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                    ],
-                }
-            ],
-        )
+        models = [
+            ai_config.get("model", "claude-sonnet-4-20250514"),
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-6",
+        ]
+        seen = set()
+        models = [m for m in models if m not in seen and not seen.add(m)]
+
+        message = None
+        for model in models:
+            try:
+                message = await client.messages.create(
+                    model=model,
+                    max_tokens=2000,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                            {"type": "text", "text": prompt},
+                        ],
+                    }],
+                )
+                break
+            except Exception:
+                continue
+
+        if not message:
+            return {"error": "All AI models failed. Check your ANTHROPIC_API_KEY."}
 
         response_text = message.content[0].text
         json_text = response_text
@@ -96,7 +101,13 @@ Return ONLY the JSON, no markdown or explanation."""
             if m:
                 json_text = m.group(1)
 
-        recipe = json.loads(json_text.strip())
+        json_text = json_text.strip()
+        if not json_text.startswith("{"):
+            idx = json_text.find("{")
+            if idx >= 0:
+                json_text = json_text[idx:]
+
+        recipe = json.loads(json_text)
         return recipe
 
     except json.JSONDecodeError as e:
