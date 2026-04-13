@@ -22,7 +22,7 @@ def get_db_path() -> str:
     return load_config()["mazarine"]["db_path"]
 
 def get_upload_dir() -> str:
-    d = load_config()["mazarine"].get("upload_dir", "uploads")
+    d = os.environ.get("MAZARINE_UPLOAD_DIR", load_config()["mazarine"].get("upload_dir", "uploads"))
     os.makedirs(d, exist_ok=True)
     return d
 

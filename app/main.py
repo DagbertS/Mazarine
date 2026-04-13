@@ -44,7 +44,6 @@ async def seed_recipes(conn, admin_id: str):
             "INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
             (tid, admin_id, tname, ttype),
         )
-        # Fetch the actual id (may already exist)
         cur = await conn.execute(
             "SELECT id FROM tags WHERE user_id = ? AND name = ?", (admin_id, tname)
         )
@@ -75,7 +74,6 @@ async def seed_recipes(conn, admin_id: str):
             ),
         )
 
-        # Link tags
         for tname in r.get("tags", []):
             if tname in tag_id_map:
                 await conn.execute(
@@ -90,31 +88,36 @@ async def seed_recipes(conn, admin_id: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_config()
-    database.db_path = get_db_path()
+    db_path = get_db_path()
+    database.db_path = db_path
+
+    # Check if this is a brand new database (file doesn't exist yet)
+    is_fresh = not Path(db_path).exists()
+
+    # Create tables (idempotent — IF NOT EXISTS)
     await database.init_db()
 
     upload_dir = get_upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Seed default admin and recipes if no users exist (fresh deployment)
-    from app.database import get_conn
-    conn = await get_conn()
-    try:
-        cur = await conn.execute("SELECT COUNT(*) FROM users")
-        count = (await cur.fetchone())[0]
-        if count == 0:
+    # Only seed on truly fresh database (file just created)
+    if is_fresh:
+        from app.database import get_conn
+        conn = await get_conn()
+        try:
             from app.auth import create_user, confirm_email
             result = await create_user("admin@mazarine.app", "admin", "admin2026!", role="admin")
             await confirm_email(result["confirmation_token"])
             print("Default admin created: admin / admin2026!")
 
-            # Seed recipes for fresh deployment
             await seed_recipes(conn, result["id"])
-    finally:
-        await conn.close()
+        finally:
+            await conn.close()
+    else:
+        print(f"Existing database found at {db_path} — skipping seed")
 
     ai_status = "configured" if os.environ.get("ANTHROPIC_API_KEY") else "not configured"
-    print(f"Mazarine started | DB: {database.db_path} | AI: {ai_status}")
+    print(f"Mazarine started | DB: {db_path} | AI: {ai_status} | Fresh: {is_fresh}")
     yield
     print("Mazarine shutting down")
 
