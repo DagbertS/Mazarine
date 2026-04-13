@@ -41,7 +41,7 @@ function renderAddRecipePage() {
       <div class="add-method-grid">
         <!-- Photo / Camera -->
         <div class="add-method-card" onclick="showPhotoMethod()">
-          <div class="add-method-icon">&#x1F4F7;</div>
+          <div class="add-method-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" width="48" height="48"><rect x="4" y="10" width="40" height="30" rx="3"/><circle cx="24" cy="26" r="8"/><circle cx="24" cy="26" r="4"/><path d="M16 10L18 5h12l2 5"/></svg></div>
           <h3>Scan or Photo</h3>
           <p>Take a photo of a recipe or dish, or upload from your library. AI will extract all the details.</p>
           <div class="add-method-actions">
@@ -58,7 +58,7 @@ function renderAddRecipePage() {
 
         <!-- Import URL -->
         <div class="add-method-card">
-          <div class="add-method-icon">&#x1F310;</div>
+          <div class="add-method-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" width="48" height="48"><circle cx="24" cy="24" r="18"/><path d="M8 24h32M24 6c-5 5-8 11-8 18s3 13 8 18c5-5 8-11 8-18s-3-13-8-18"/></svg></div>
           <h3>Import from URL</h3>
           <p>Paste a link from any recipe website. We'll extract everything automatically.</p>
           <div style="margin-top:1rem" onclick="event.stopPropagation()">
@@ -70,7 +70,7 @@ function renderAddRecipePage() {
 
         <!-- Manual -->
         <div class="add-method-card" onclick="startManualRecipe()">
-          <div class="add-method-icon">&#x270F;</div>
+          <div class="add-method-icon"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" width="48" height="48"><path d="M8 40l3-12L35 4l5 5-24 24z"/><path d="M28 11l5 5"/><line x1="11" y1="37" x2="17" y2="31"/></svg></div>
           <h3>Write from Scratch</h3>
           <p>Create a recipe manually by filling in the title, ingredients, directions, and photos.</p>
           <button class="btn btn-sm mt-1">Start Writing</button>

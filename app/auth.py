@@ -3,6 +3,7 @@ import hashlib
 import os
 import uuid
 import json
+import random
 from datetime import datetime, timezone, timedelta
 from fastapi import Request, HTTPException
 from app.database import get_conn, _row_dict
@@ -18,30 +19,37 @@ def _generate_salt() -> str:
 def _generate_token() -> str:
     return uuid.uuid4().hex + uuid.uuid4().hex
 
+def _generate_6digit_code() -> str:
+    return str(random.randint(100000, 999999))
+
+
 async def create_user(email: str, username: str, password: str, role: str = "user") -> dict:
+    """Create a new user in pending state with a 6-digit confirmation code."""
     salt = _generate_salt()
     pw_hash = _hash_password(password, salt)
     uid = f"usr-{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
-    conf_token = uuid.uuid4().hex
+    code = _generate_6digit_code()
     conn = await get_conn()
     try:
         await conn.execute(
             """INSERT INTO users (id, email, username, password_hash, salt, display_name, role, status,
                email_confirmed, confirmation_token, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (uid, email.lower(), username, pw_hash, salt, username, role, "pending", 0, conf_token, now, now),
+            (uid, email.lower(), username, pw_hash, salt, email.split('@')[0], role, "pending", 0, code, now, now),
         )
         await conn.commit()
         await _log_activity(conn, uid, "register", {"email": email})
-        return {"id": uid, "email": email, "username": username, "confirmation_token": conf_token}
+        return {"id": uid, "email": email, "username": username, "confirmation_code": code}
     finally:
         await conn.close()
 
-async def confirm_email(token: str) -> bool:
+
+async def confirm_email(code: str) -> bool:
+    """Confirm a user account with a 6-digit code."""
     conn = await get_conn()
     try:
-        cur = await conn.execute("SELECT id FROM users WHERE confirmation_token = ?", (token,))
+        cur = await conn.execute("SELECT id FROM users WHERE confirmation_token = ? AND status = 'pending'", (code,))
         row = await cur.fetchone()
         if not row:
             return False
@@ -54,15 +62,24 @@ async def confirm_email(token: str) -> bool:
     finally:
         await conn.close()
 
+
 async def login(email_or_username: str, password: str) -> dict | None:
     conn = await get_conn()
     try:
         cur = await conn.execute(
-            "SELECT * FROM users WHERE (email = ? OR username = ?) AND status != 'blocked'",
+            "SELECT * FROM users WHERE (email = ? OR username = ?) AND status = 'active'",
             (email_or_username.lower(), email_or_username),
         )
         user = await cur.fetchone()
         if not user:
+            # Check if pending — give a specific message
+            cur2 = await conn.execute(
+                "SELECT status FROM users WHERE (email = ? OR username = ?)",
+                (email_or_username.lower(), email_or_username),
+            )
+            pending = await cur2.fetchone()
+            if pending and pending["status"] == "pending":
+                return {"error": "pending", "message": "Account not yet verified. Please enter your confirmation code."}
             return None
         user = _row_dict(user)
         pw_hash = _hash_password(password, user["salt"])
@@ -89,6 +106,26 @@ async def login(email_or_username: str, password: str) -> dict | None:
     finally:
         await conn.close()
 
+
+async def resend_confirmation_code(email: str) -> dict | None:
+    """Generate a new 6-digit code for a pending user."""
+    conn = await get_conn()
+    try:
+        cur = await conn.execute("SELECT id FROM users WHERE email = ? AND status = 'pending'", (email.lower(),))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        code = _generate_6digit_code()
+        await conn.execute(
+            "UPDATE users SET confirmation_token = ?, updated_at = ? WHERE id = ?",
+            (code, datetime.now(timezone.utc).isoformat(), row["id"]),
+        )
+        await conn.commit()
+        return {"code": code}
+    finally:
+        await conn.close()
+
+
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("session_token") or request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
@@ -98,7 +135,7 @@ async def get_current_user(request: Request) -> dict:
     try:
         cur = await conn.execute(
             """SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id
-               WHERE s.token_hash = ? AND s.revoked = 0 AND s.expires_at > ? AND u.status != 'blocked'""",
+               WHERE s.token_hash = ? AND s.revoked = 0 AND s.expires_at > ? AND u.status = 'active'""",
             (token_hash, datetime.now(timezone.utc).isoformat()),
         )
         user = await cur.fetchone()
@@ -112,11 +149,13 @@ async def get_current_user(request: Request) -> dict:
     finally:
         await conn.close()
 
+
 async def require_admin(request: Request) -> dict:
     user = await get_current_user(request)
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
 
 async def logout(request: Request):
     token = request.cookies.get("session_token") or request.headers.get("Authorization", "").replace("Bearer ", "")
@@ -129,6 +168,7 @@ async def logout(request: Request):
         finally:
             await conn.close()
 
+
 async def _log_activity(conn, user_id: str, action: str, details: dict):
     aid = f"act-{uuid.uuid4().hex[:12]}"
     await conn.execute(
@@ -136,6 +176,7 @@ async def _log_activity(conn, user_id: str, action: str, details: dict):
         (aid, user_id, action, json.dumps(details), datetime.now(timezone.utc).isoformat()),
     )
     await conn.commit()
+
 
 async def log_activity(user_id: str, action: str, details: dict):
     conn = await get_conn()
