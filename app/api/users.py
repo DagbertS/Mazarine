@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.auth import create_user, confirm_email, login, logout, get_current_user, resend_confirmation_code
 from app.database import get_conn
-from app.services.email import send_confirmation_email
+from app.services.email import send_confirmation_email, notify_admin_new_user, notify_admin_user_verified
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -64,6 +64,7 @@ async def register(body: RegisterRequest):
         result = await create_user(email, email, body.password)
         print(f"[MAZARINE] Confirmation code for {email}: {result['confirmation_code']}")
         await send_confirmation_email(email, result["confirmation_code"])
+        await notify_admin_new_user(email)
         return {
             "status": "ok",
             "message": "A 6-digit confirmation code has been sent to your email address.",
@@ -80,16 +81,18 @@ async def confirm(body: ConfirmRequest):
     code = body.code.strip()
     if len(code) != 6 or not code.isdigit():
         raise HTTPException(status_code=400, detail="Please enter a valid 6-digit code")
-    ok = await confirm_email(code)
-    if not ok:
+    email = await confirm_email(code)
+    if not email:
         raise HTTPException(status_code=400, detail="Invalid or expired code")
+    await notify_admin_user_verified(email)
     return {"status": "ok", "message": "Account confirmed! You can now sign in."}
 
 @router.get("/confirm/{token}")
 async def confirm_get(token: str):
-    ok = await confirm_email(token)
-    if not ok:
+    email = await confirm_email(token)
+    if not email:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
+    await notify_admin_user_verified(email)
     return {"status": "ok", "message": "Email confirmed. You can now log in."}
 
 @router.post("/resend-code")

@@ -45,20 +45,20 @@ async def create_user(email: str, username: str, password: str, role: str = "use
         await conn.close()
 
 
-async def confirm_email(code: str) -> bool:
-    """Confirm a user account with a 6-digit code."""
+async def confirm_email(code: str) -> str | None:
+    """Confirm a user account with a 6-digit code. Returns the user's email or None."""
     conn = await get_conn()
     try:
-        cur = await conn.execute("SELECT id FROM users WHERE confirmation_token = ? AND status = 'pending'", (code,))
+        cur = await conn.execute("SELECT id, email FROM users WHERE confirmation_token = ? AND status = 'pending'", (code,))
         row = await cur.fetchone()
         if not row:
-            return False
+            return None
         await conn.execute(
             "UPDATE users SET email_confirmed = 1, status = 'active', confirmation_token = NULL, updated_at = ? WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), row["id"]),
         )
         await conn.commit()
-        return True
+        return row["email"]
     finally:
         await conn.close()
 
