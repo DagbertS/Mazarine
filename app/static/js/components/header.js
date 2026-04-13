@@ -9,15 +9,26 @@ function renderHeader(user) {
         <img src="/static/img/logo.svg" alt="Mazarine" class="logo-img">
       </a>
       <div class="header-right">
-        <div class="search-bar">
+        <!-- Desktop: full search bar -->
+        <div class="search-bar search-desktop">
           <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
           <input type="text" placeholder="Search..." id="globalSearch"
                  onkeydown="handleGlobalSearch(event, this.value)">
         </div>
+        <!-- Mobile: search icon that expands -->
+        <button class="search-toggle" onclick="toggleMobileSearch()" aria-label="Search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+        </button>
         <span class="header-user">${user ? user.display_name || user.username : ''}</span>
         ${user ? '<button class="btn btn-sm header-logout" onclick="app.logout()">Logout</button>' : ''}
       </div>
     </header>
+    <!-- Mobile search overlay -->
+    <div class="mobile-search-bar" id="mobileSearchBar">
+      <input type="text" placeholder="Search recipes or ingredients..." id="mobileSearchInput"
+             onkeydown="handleMobileSearch(event, this.value)">
+      <button onclick="closeMobileSearch()" class="mobile-search-close">&times;</button>
+    </div>
     <nav class="nav-bar" id="navBar">
       <a href="javascript:void(0)" onclick="app.goto('recipes');closeMobileMenu()" data-page="recipes">Recipes</a>
       <a href="javascript:void(0)" onclick="app.goto('menu');closeMobileMenu()" data-page="menu">Menu Builder</a>
@@ -48,7 +59,32 @@ function closeMobileMenu() {
   if (burger) burger.classList.remove('open');
 }
 
+function toggleMobileSearch() {
+  const bar = document.getElementById('mobileSearchBar');
+  if (bar) {
+    bar.classList.toggle('open');
+    if (bar.classList.contains('open')) {
+      const input = document.getElementById('mobileSearchInput');
+      if (input) input.focus();
+    }
+  }
+}
+
+function closeMobileSearch() {
+  const bar = document.getElementById('mobileSearchBar');
+  if (bar) bar.classList.remove('open');
+}
+
+function handleMobileSearch(e, value) {
+  if (e.key !== 'Enter' || !value.trim()) return;
+  closeMobileSearch();
+  handleGlobalSearch(e, value);
+}
+
 window.renderHeader = renderHeader;
 window.updateActiveNav = updateActiveNav;
 window.toggleMobileMenu = toggleMobileMenu;
 window.closeMobileMenu = closeMobileMenu;
+window.toggleMobileSearch = toggleMobileSearch;
+window.closeMobileSearch = closeMobileSearch;
+window.handleMobileSearch = handleMobileSearch;
