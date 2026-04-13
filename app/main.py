@@ -146,6 +146,14 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 async def serve_ui():
     return FileResponse(str(static_dir / "index.html"))
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    return FileResponse(str(static_dir / "manifest.json"), media_type="application/manifest+json")
+
+@app.get("/favicon.png")
+async def serve_favicon():
+    return FileResponse(str(static_dir / "img" / "favicon.png"), media_type="image/png")
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "mazarine", "version": "1.0.0"}
