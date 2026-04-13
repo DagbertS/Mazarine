@@ -1,10 +1,11 @@
 import json
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from app.auth import get_current_user
 from app.database import get_conn, _row_dict
 from app.services.scaler import scale_ingredients, convert_recipe_units
 from app.services.importer import import_from_url
 from app.services.enrichment import enrich_recipe
+from app.services.ocr import analyze_recipe_image
 from app.auth import log_activity
 import uuid
 from datetime import datetime, timezone
@@ -174,6 +175,43 @@ async def check_duplicate(request: Request):
     from app.services.duplicate_detector import find_duplicates
     duplicates = await find_duplicates(body, user["id"], threshold=0.55)
     return {"duplicates": duplicates, "has_duplicates": len(duplicates) > 0}
+
+@router.post("/analyze-image")
+async def analyze_image(request: Request, file: UploadFile = File(...)):
+    """Analyze a recipe image (photo of cookbook, handwritten card, or plated dish) using Claude Vision."""
+    user = await get_current_user(request)
+    if not user.get("can_upload", True):
+        raise HTTPException(status_code=403, detail="Upload not permitted")
+
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image too large (max 20MB)")
+
+    content_type = file.content_type or "image/jpeg"
+    await log_activity(user["id"], "ocr_analyze", {"filename": file.filename, "size": len(content)})
+
+    result = await analyze_recipe_image(content, content_type)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    # Save the uploaded image so it can be used as the recipe photo
+    from pathlib import Path
+    from app.config import get_upload_dir
+    upload_dir = Path(get_upload_dir()) / user["id"]
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "photo.jpg").suffix or ".jpg"
+    fname = f"{uuid.uuid4().hex[:12]}{ext}"
+    fpath = upload_dir / fname
+    fpath.write_bytes(content)
+    photo_url = f"/uploads/{user['id']}/{fname}"
+
+    # Attach the uploaded image as the recipe photo
+    if not result.get("photo_urls"):
+        result["photo_urls"] = []
+    result["photo_urls"].insert(0, photo_url)
+
+    return result
+
 
 @router.post("/recipes/{recipe_id}/enrich")
 async def enrich_existing(recipe_id: str, request: Request):

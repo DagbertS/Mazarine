@@ -73,7 +73,7 @@ async function renderHomePage() {
             <h2 style="margin-bottom:0.5rem">What would you like to cook?</h2>
             <p class="text-muted" style="margin-bottom:1.5rem">Import a recipe from the web, build a menu with AI, or search by what's in your pantry</p>
             <div class="flex gap-1" style="justify-content:center;flex-wrap:wrap">
-              <button class="btn" onclick="showImportModal()">Import URL</button>
+              <button class="btn" onclick="app.goto('recipe/new')">Import URL</button>
               <button class="btn" onclick="app.goto('menu')">Menu Builder</button>
               <button class="btn" onclick="app.goto('ingredient-search')">By Ingredient</button>
               <button class="btn btn-primary" onclick="app.goto('recipe/new')">New Recipe</button>
@@ -234,7 +234,7 @@ function getEditorialPicks(all) {
 }
 
 /* ── Import Modal ── */
-function showImportModal() {
+function app.goto('recipe/new') {
   showModal('Import Recipe from URL',
     `<div class="form-group">
        <label class="form-label">Recipe URL</label>
