@@ -233,35 +233,6 @@ function getEditorialPicks(all) {
   return picks;
 }
 
-/* ── Import Modal ── */
-function app.goto('recipe/new') {
-  showModal('Import Recipe from URL',
-    `<div class="form-group">
-       <label class="form-label">Recipe URL</label>
-       <input class="form-input" id="importUrl" type="url" placeholder="https://..." required>
-     </div>
-     <p class="form-hint">Paste a link from any recipe website. We'll extract the recipe automatically.</p>`,
-    `<button class="btn" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="doImport()">Import</button>`);
-}
-
-async function doImport() {
-  const url = document.getElementById('importUrl').value;
-  if (!url) return;
-  toast('Importing recipe...', 'info');
-  closeModal();
-  try {
-    const data = await api.post('/api/import', { url, auto_save: true });
-    if (data.duplicate_action_required && data.duplicates && data.duplicates.length > 0) {
-      showDuplicateModal(data, data.duplicates[0]);
-      return;
-    }
-    toast(`Imported: ${data.title}`, 'success');
-    if (data.id) app.goto(`recipe/${data.id}`);
-    else app.goto('recipes');
-  } catch(e) { toast(`Import failed: ${e.message}`, 'error'); }
-}
-
 function showCategoryModal() {
   showModal('New Category',
     `<div class="form-group">
@@ -321,8 +292,6 @@ function renderSidebar(categories, tags) {
 
 window.renderHomePage = renderHomePage;
 window.renderSidebar = renderSidebar;
-window.showImportModal = showImportModal;
-window.doImport = doImport;
 window.showCategoryModal = showCategoryModal;
 window.createCategory = createCategory;
 window.goHeroSlide = goHeroSlide;

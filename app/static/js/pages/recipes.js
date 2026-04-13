@@ -42,8 +42,7 @@ async function renderRecipesPage(params) {
                 <option value="title" ${sort==='title'?'selected':''}>A-Z</option>
                 <option value="rating" ${sort==='rating'?'selected':''}>Rating</option>
               </select>
-              <button class="btn" onclick="showImportModal()">Import</button>
-              <button class="btn btn-primary" onclick="app.goto('recipe/new')">New Recipe</button>
+              <button class="btn btn-primary" onclick="app.goto('recipe/new')">Add Recipe</button>
             </div>
           </div>
           ${data.recipes.length
