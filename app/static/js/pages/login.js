@@ -1,12 +1,23 @@
 let _pendingEmail = '';
+let _authView = 'login'; // 'login', 'register', 'verify'
 
 function renderLoginPage() {
+  // Preserve the current auth view state across re-renders
+  let formHtml;
+  if (_authView === 'register') {
+    formHtml = registerForm();
+  } else if (_authView === 'verify') {
+    formHtml = verificationForm(_pendingEmail);
+  } else {
+    formHtml = loginForm();
+  }
+
   return `
     <div class="auth-page">
       <div class="auth-card">
         <div class="auth-logo">Mazarine</div>
         <div class="auth-subtitle">A Personal Cookbook</div>
-        <div id="authForm">${loginForm()}</div>
+        <div id="authForm">${formHtml}</div>
       </div>
     </div>`;
 }
@@ -41,7 +52,7 @@ function registerForm() {
         <p class="form-hint">This will also be your username</p>
       </div>
       <div class="form-group">
-        <label class="form-label">Password</label>
+        <label class="form-label">Choose a Password</label>
         <input class="form-input" type="password" id="regPassword" required minlength="6" autocomplete="new-password">
         <p class="form-hint">At least 6 characters</p>
       </div>
@@ -58,8 +69,9 @@ function verificationForm(email) {
   return `
     <div style="text-align:center;margin-bottom:1.5rem">
       <div style="font-size:2rem;margin-bottom:0.5rem">&#x2709;</div>
-      <p>We've sent a 6-digit code to</p>
-      <p style="font-weight:600">${esc(email)}</p>
+      <p>We sent a 6-digit confirmation code to</p>
+      <p style="font-weight:600;margin-bottom:0.25rem">${esc(email || '...')}</p>
+      <p class="text-sm text-muted">Check your inbox and enter the code below</p>
     </div>
     <form onsubmit="doVerify(event)">
       <div class="form-group">
@@ -73,12 +85,27 @@ function verificationForm(email) {
     </form>
     <div class="auth-footer">
       Didn't receive it? <a href="javascript:void(0)" onclick="resendCode()">Resend code</a>
-      <br><a href="javascript:void(0)" onclick="showLogin()" style="font-size:0.8rem;color:var(--text-muted)">Back to sign in</a>
+      <br><br>
+      <a href="javascript:void(0)" onclick="showLogin()" style="color:var(--text-muted)">Back to sign in</a>
     </div>`;
 }
 
-function showRegister() { document.getElementById('authForm').innerHTML = registerForm(); }
-function showLogin() { document.getElementById('authForm').innerHTML = loginForm(); }
+function showRegister() {
+  _authView = 'register';
+  document.getElementById('authForm').innerHTML = registerForm();
+}
+
+function showLogin() {
+  _authView = 'login';
+  _pendingEmail = '';
+  document.getElementById('authForm').innerHTML = loginForm();
+}
+
+function showVerify(email) {
+  _authView = 'verify';
+  _pendingEmail = email;
+  document.getElementById('authForm').innerHTML = verificationForm(email);
+}
 
 /* ── Login Action ── */
 async function doLogin(e) {
@@ -91,13 +118,13 @@ async function doLogin(e) {
       password: document.getElementById('loginPassword').value,
     });
     window.app.user = data.user;
+    _authView = 'login'; // reset for next time
     toast('Welcome back!', 'success');
     app.goto('home');
   } catch(err) {
-    // Check if account is pending verification
     if (err.message && err.message.includes('not yet verified')) {
       _pendingEmail = document.getElementById('loginEmail').value;
-      document.getElementById('authForm').innerHTML = verificationForm(_pendingEmail);
+      showVerify(_pendingEmail);
       toast('Please verify your account first', 'info');
     } else {
       errEl.textContent = err.message || 'Invalid credentials';
@@ -115,11 +142,9 @@ async function doRegister(e) {
   const password = document.getElementById('regPassword').value;
   try {
     const data = await api.post('/api/auth/register', { email, password });
-    _pendingEmail = email;
-    toast('Confirmation code sent!', 'success');
-    // Show the verification form
-    document.getElementById('authForm').innerHTML = verificationForm(email);
-    // In dev mode, show the code in a toast for easy testing
+    toast('Confirmation code sent to your email!', 'success');
+    showVerify(email);
+    // In dev mode, show the code for testing
     if (data._dev_code) {
       setTimeout(() => toast(`Dev code: ${data._dev_code}`, 'info'), 500);
     }
@@ -138,14 +163,15 @@ async function doVerify(e) {
   try {
     await api.post('/api/auth/confirm', { code });
     toast('Account verified! Please sign in.', 'success');
+    _authView = 'login';
     showLogin();
-    // Pre-fill the email
+    // Pre-fill email
     setTimeout(() => {
       const emailInput = document.getElementById('loginEmail');
       if (emailInput && _pendingEmail) emailInput.value = _pendingEmail;
     }, 100);
   } catch(err) {
-    errEl.textContent = err.message || 'Invalid code';
+    errEl.textContent = err.message || 'Invalid code. Please try again.';
     errEl.style.display = 'block';
   }
 }
@@ -170,4 +196,5 @@ window.doRegister = doRegister;
 window.doVerify = doVerify;
 window.showRegister = showRegister;
 window.showLogin = showLogin;
+window.showVerify = showVerify;
 window.resendCode = resendCode;
