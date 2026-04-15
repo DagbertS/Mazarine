@@ -73,6 +73,10 @@ window.app = {
     } else if (hash.startsWith('ingredient-search')) {
       const params = hash.includes('?') ? hash.substring(hash.indexOf('?')) : '';
       renderIngredientSearchPage(params);
+    } else if (hash.startsWith('web-search')) {
+      const params = hash.includes('?') ? hash.substring(hash.indexOf('?')) : '';
+      const q = new URLSearchParams(params).get('q') || '';
+      renderWebSearchPage(q);
     } else if (hash === 'planner') {
       renderPlannerPage();
     } else if (hash === 'shopping') {

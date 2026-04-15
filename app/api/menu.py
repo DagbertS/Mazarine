@@ -363,3 +363,273 @@ async def search_by_ingredient(body: IngredientSearchRequest, request: Request):
         return {"recipes": results, "total": len(results), "searched_ingredients": search_terms}
     finally:
         await conn.close()
+
+
+class WebSearchRequest(BaseModel):
+    query: str
+
+class WebSaveRequest(BaseModel):
+    recipes: list  # List of recipe dicts from web search results
+
+
+@router.post("/web-search")
+async def web_recipe_search(body: WebSearchRequest, request: Request):
+    """Search the web for recipes using Claude AI, return structured results with photos."""
+    user = await get_current_user(request)
+    ai_config = get_ai_config()
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="AI not configured. Set ANTHROPIC_API_KEY.")
+
+    await log_activity(user["id"], "web_search", {"query": body.query})
+
+    prompt = f"""Search your knowledge for recipes matching: "{body.query}"
+
+Return exactly 8 diverse recipe suggestions as a JSON array. Each recipe should be a real, well-known recipe.
+
+Return ONLY a JSON array (no markdown, no explanation):
+[
+  {{
+    "title": "Recipe Name",
+    "description": "2-3 sentence appetising description",
+    "cuisine": "Italian",
+    "difficulty": "easy",
+    "total_time_minutes": 30,
+    "servings": 4,
+    "key_ingredients": ["ingredient1", "ingredient2", "ingredient3"],
+    "tags": ["tag1", "tag2"],
+    "source_attribution": "Inspired by traditional recipe"
+  }}
+]
+
+Rules:
+- 8 results, diverse cuisines and styles
+- Real dishes that exist, not invented ones
+- Descriptions should be appetising and specific
+- Include a mix of difficulties (easy, medium, advanced)
+- Tags: cuisine, dietary, meal type (max 4)
+- key_ingredients: 3-5 main ingredients only"""
+
+    try:
+        import anthropic
+        import asyncio as _asyncio
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+
+        models = [
+            ai_config.get("model", "claude-sonnet-4-20250514"),
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-6",
+        ]
+        seen_m = set()
+        models = [m for m in models if m not in seen_m and not seen_m.add(m)]
+
+        response_text = None
+        for attempt in range(3):
+            for model in models:
+                try:
+                    message = await client.messages.create(
+                        model=model, max_tokens=4000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    response_text = message.content[0].text
+                    break
+                except Exception as e:
+                    if "529" in str(e):
+                        await _asyncio.sleep(2 * (attempt + 1))
+                    continue
+            if response_text:
+                break
+
+        if not response_text:
+            raise HTTPException(status_code=500, detail="AI search failed. Please try again.")
+
+        # Parse JSON
+        json_text = response_text.strip()
+        if "```" in json_text:
+            m = re.search(r"```(?:json)?\s*(.*?)```", json_text, re.DOTALL)
+            if m:
+                json_text = m.group(1).strip()
+        if not json_text.startswith("["):
+            idx = json_text.find("[")
+            if idx >= 0:
+                json_text = json_text[idx:]
+
+        results = json.loads(json_text)
+
+        # Find Pexels photos for each result
+        from app.services.photo_finder import find_recipe_photo
+        for r in results:
+            photo = await find_recipe_photo(r.get("title", ""))
+            r["photo_url"] = photo
+
+        return {"results": results, "query": body.query, "total": len(results)}
+
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="AI returned invalid results. Please try again.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)[:100]}")
+
+
+@router.post("/web-search/preview")
+async def web_recipe_preview(request: Request):
+    """Get full recipe details for selected web search results using AI."""
+    user = await get_current_user(request)
+    body = await request.json()
+    titles = body.get("titles", [])
+    if not titles or len(titles) > 4:
+        raise HTTPException(status_code=400, detail="Select 1-4 recipes to preview")
+
+    ai_config = get_ai_config()
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="AI not configured.")
+
+    titles_str = "\n".join(f"- {t}" for t in titles)
+    prompt = f"""Create complete, detailed recipes for these dishes:
+{titles_str}
+
+Return ONLY a JSON array with full recipe details for each:
+[
+  {{
+    "title": "Recipe Name",
+    "description": "1-2 sentence description",
+    "servings": 4,
+    "prep_time_minutes": 15,
+    "cook_time_minutes": 30,
+    "total_time_minutes": 45,
+    "ingredients": [{{"qty": "1", "unit": "cup", "name": "ingredient", "note": "", "group": ""}}],
+    "directions": [{{"step": 1, "text": "Direction text.", "timer_minutes": null}}],
+    "nutrition": {{"calories": 400, "protein": 25, "carbs": 40, "fat": 15, "fiber": 5}},
+    "suggested_tags": ["cuisine", "dietary", "type", "characteristic"]
+  }}
+]
+
+Max 8 ingredients, max 5 directions per recipe. Be concise."""
+
+    try:
+        import anthropic
+        import asyncio as _asyncio
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+
+        models = [ai_config.get("model", "claude-sonnet-4-20250514"), "claude-sonnet-4-6"]
+        seen_m = set()
+        models = [m for m in models if m not in seen_m and not seen_m.add(m)]
+
+        response_text = None
+        for attempt in range(3):
+            for model in models:
+                try:
+                    message = await client.messages.create(
+                        model=model, max_tokens=8000,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    response_text = message.content[0].text
+                    break
+                except Exception as e:
+                    if "529" in str(e):
+                        await _asyncio.sleep(2 * (attempt + 1))
+                    continue
+            if response_text:
+                break
+
+        if not response_text:
+            raise HTTPException(status_code=500, detail="AI failed. Try again.")
+
+        json_text = response_text.strip()
+        if "```" in json_text:
+            m = re.search(r"```(?:json)?\s*(.*?)```", json_text, re.DOTALL)
+            if m:
+                json_text = m.group(1).strip()
+        if not json_text.startswith("["):
+            idx = json_text.find("[")
+            if idx >= 0:
+                json_text = json_text[idx:]
+
+        recipes = json.loads(json_text)
+
+        # Add photos
+        from app.services.photo_finder import find_recipe_photo
+        for r in recipes:
+            r["photo_url"] = await find_recipe_photo(r.get("title", ""))
+
+        return {"recipes": recipes}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)[:100]}")
+
+
+@router.post("/web-search/save")
+async def save_web_recipes(body: WebSaveRequest, request: Request):
+    """Save recipes from web search to the collection with AI enrichment + duplicate check + photos."""
+    user = await get_current_user(request)
+    from app.services.enrichment import enrich_recipe
+    from app.services.duplicate_detector import find_duplicates
+    from app.services.photo_finder import find_recipe_photo
+
+    results = []
+    for recipe in body.recipes:
+        if not recipe.get("title"):
+            continue
+
+        # 1. Duplicate check
+        duplicates = await find_duplicates(recipe, user["id"], threshold=0.55)
+        if duplicates:
+            results.append({
+                "title": recipe["title"], "status": "duplicate",
+                "match": duplicates[0], "new_recipe": recipe,
+            })
+            continue
+
+        # 2. AI enrichment
+        enriched = await enrich_recipe(recipe, force_tags=True)
+        if enriched:
+            if enriched.get("nutrition") and not recipe.get("nutrition"):
+                recipe["nutrition"] = enriched["nutrition"]
+            if enriched.get("description") and not recipe.get("description"):
+                recipe["description"] = enriched["description"]
+            extra = enriched.get("suggested_tags", [])
+            existing = recipe.get("suggested_tags", [])
+            recipe["suggested_tags"] = list(set(existing + extra))
+
+        # 3. Photo
+        photo_url = recipe.get("photo_url") or await find_recipe_photo(recipe["title"])
+        photo_urls = [photo_url] if photo_url else []
+
+        # 4. Save
+        rid = f"rcp-{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        conn = await get_conn()
+        try:
+            await conn.execute(
+                """INSERT INTO recipes (id, user_id, title, description, ingredients, directions, servings,
+                   prep_time_minutes, cook_time_minutes, total_time_minutes, notes, nutrition, photo_urls,
+                   rating, is_favourite, is_pinned, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (rid, user["id"], recipe["title"], recipe.get("description", ""),
+                 json.dumps(recipe.get("ingredients", [])), json.dumps(recipe.get("directions", [])),
+                 recipe.get("servings"), recipe.get("prep_time_minutes"), recipe.get("cook_time_minutes"),
+                 recipe.get("total_time_minutes"), recipe.get("source_attribution", ""),
+                 json.dumps(recipe.get("nutrition", {})), json.dumps(photo_urls),
+                 0, 0, 0, now, now),
+            )
+            tags_added = []
+            for tname in recipe.get("suggested_tags", []):
+                tid = f"tag-{uuid.uuid4().hex[:8]}"
+                await conn.execute("INSERT OR IGNORE INTO tags (id, user_id, name, type) VALUES (?,?,?,?)",
+                                   (tid, user["id"], tname, "auto"))
+                cur = await conn.execute("SELECT id FROM tags WHERE user_id = ? AND name = ?", (user["id"], tname))
+                row = await cur.fetchone()
+                if row:
+                    await conn.execute("INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id) VALUES (?,?)", (rid, row["id"]))
+                    tags_added.append(tname)
+            await conn.commit()
+            results.append({"id": rid, "title": recipe["title"], "status": "saved", "tags": tags_added, "photo": photo_urls[0] if photo_urls else None})
+        finally:
+            await conn.close()
+
+    await log_activity(user["id"], "web_save", {"recipes": len([r for r in results if r.get("status") == "saved"])})
+    return {"status": "saved", "recipes": results}

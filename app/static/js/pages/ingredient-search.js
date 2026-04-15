@@ -97,6 +97,10 @@ async function doIngredientSearch() {
               </div>
             </div>`;
         }).join('')}
+      </div>
+      <div style="text-align:center;padding:2rem 0;margin-top:1.5rem;border-top:1px solid var(--border)">
+        <p class="text-muted" style="margin-bottom:0.75rem">Didn't find what you're looking for?</p>
+        <button class="btn" onclick="app.goto('web-search','?q=${encodeURIComponent(ingredients.join(' '))}')">Search the Web</button>
       </div>`;
   } catch(e) {
     resultsDiv.innerHTML = `<p style="color:var(--danger)">Error: ${esc(e.message)}</p>`;

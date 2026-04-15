@@ -52,6 +52,11 @@ async function renderRecipesPage(params) {
                 <h3>No recipes found</h3>
                 <p>${q ? 'Try different search terms' : 'Start by importing or creating a recipe'}</p>
               </div>`}
+          ${q ? `
+            <div style="text-align:center;padding:2rem 0;margin-top:1.5rem;border-top:1px solid var(--border)">
+              <p class="text-muted" style="margin-bottom:0.75rem">Didn't find what you're looking for?</p>
+              <button class="btn" onclick="app.goto('web-search','?q=${encodeURIComponent(q)}')">Search the Web for "${esc(q)}"</button>
+            </div>` : ''}
         </div>
       </div>`;
   } catch(e) { content.innerHTML = `<p style="padding:2rem">Error: ${esc(e.message)}</p>`; }
