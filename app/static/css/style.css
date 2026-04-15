@@ -1201,6 +1201,12 @@ a:hover { color: var(--accent); }
   gap: 0.75rem;
   margin-bottom: 0.5rem;
 }
+.web-result-source {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 0.4rem;
+}
 .web-result-tags { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
 
 @media (max-width: 768px) {

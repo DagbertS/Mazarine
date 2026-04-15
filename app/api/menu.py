@@ -398,12 +398,13 @@ Return ONLY a JSON array (no markdown, no explanation):
     "servings": 4,
     "key_ingredients": ["ingredient1", "ingredient2", "ingredient3"],
     "tags": ["tag1", "tag2"],
-    "source_attribution": "Inspired by traditional recipe"
+    "source_attribution": "Origin or notable chef/region, e.g. 'Classic French bistro dish', 'Julia Child classic', 'Thai street food staple', 'Ottolenghi-style'"
   }}
 ]
 
 Rules:
 - 8 results, diverse cuisines and styles
+- source_attribution: mention the origin, region, or a well-known chef associated with the dish — be specific
 - Real dishes that exist, not invented ones
 - Descriptions should be appetising and specific
 - Include a mix of difficulties (easy, medium, advanced)

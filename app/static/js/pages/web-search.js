@@ -100,6 +100,7 @@ function renderWebResultTile(r, index) {
           ${r.difficulty ? `<span>${esc(r.difficulty)}</span>` : ''}
           ${r.servings ? `<span>${r.servings} servings</span>` : ''}
         </div>
+        ${r.source_attribution ? `<div class="web-result-source">${esc(r.source_attribution)}</div>` : ''}
         ${r.key_ingredients ? `<div class="web-result-tags">${r.key_ingredients.slice(0,4).map(k => `<span class="tag">${esc(k)}</span>`).join('')}</div>` : ''}
         <button class="btn btn-sm mt-1" onclick="addWebRecipeDirect(${index})">Add to Collection</button>
       </div>
