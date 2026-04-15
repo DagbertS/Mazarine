@@ -398,13 +398,15 @@ Return ONLY a JSON array (no markdown, no explanation):
     "servings": 4,
     "key_ingredients": ["ingredient1", "ingredient2", "ingredient3"],
     "tags": ["tag1", "tag2"],
-    "source_attribution": "Origin or notable chef/region, e.g. 'Classic French bistro dish', 'Julia Child classic', 'Thai street food staple', 'Ottolenghi-style'"
+    "chef": "Chef name if associated (e.g. Julia Child, Yotam Ottolenghi, Jamie Oliver, Massimo Bottura) or empty string",
+    "source": "Where this recipe is well-known from (e.g. Bon Appétit, NYT Cooking, Serious Eats, BBC Good Food, traditional Thai street food, classic French bistro)"
   }}
 ]
 
 Rules:
 - 8 results, diverse cuisines and styles
-- source_attribution: mention the origin, region, or a well-known chef associated with the dish — be specific
+- chef: ALWAYS name a famous chef known for a popular version of this dish (e.g. Marcella Hazan, Kenji Lopez-Alt, Nigella Lawson, Gordon Ramsay, Ina Garten, Jamie Oliver, Yotam Ottolenghi, Alison Roman, David Chang, Rick Bayless). Every dish has a well-known chef version — pick one.
+- source: name the publication or website where that chef's version was popularised (e.g. NYT Cooking, Bon Appétit, Serious Eats, Food Network, BBC Good Food, Epicurious, The Food Lab)
 - Real dishes that exist, not invented ones
 - Descriptions should be appetising and specific
 - Include a mix of difficulties (easy, medium, advanced)
